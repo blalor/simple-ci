@@ -10,6 +10,8 @@ import sys, os
 import logging
 import subprocess
 import time
+import colorama
+from colorama import Fore, Style
 
 from FSEvents import \
     FSEventStreamCreate, \
@@ -41,6 +43,8 @@ DO_SHUTDOWN = False
 DO_CALL_EVT = threading.Event()
 
 def start_fs_events(path_to_monitor):
+    logging.info("monitoring " + path_to_monitor)
+    
     stream_ref = FSEventStreamCreate(
         None,                               # Use the default CFAllocator
         fsevent_callback,
@@ -94,8 +98,13 @@ def timer_callback(*args):
 def run_command():
     logging.debug("in run_command")
     while not DO_SHUTDOWN:
+        time.sleep(0.5)
+        
         if DO_CALL_EVT.is_set():
-            logging.debug("got event")
+            # clear the screen
+            print '%s2J' % (colorama.ansi.CSI,)
+            
+            print '%s==>%s Running: %s%s' % (Fore.YELLOW, Fore.CYAN, " ".join(SUBPROCESS_ARGS), Style.RESET_ALL)
             
             # with open("/dev/null", "r") as dev_null:
             try:
@@ -105,25 +114,30 @@ def run_command():
                     # shell=True,
                     # stdin=dev_null,
                 )
+                
+                print '%s==>%s SUCCESS%s' % (Fore.YELLOW, Fore.GREEN, Style.RESET_ALL)
             except subprocess.CalledProcessError, e:
                 logging.error(e)
+                print '%s==>%s FAILURE%s' % (Fore.YELLOW + Style.BRIGHT, Fore.RED, Style.RESET_ALL)
             except OSError, e:
                 raise RuntimeError("Unable to invoke %s: %s" % (" ".join(SUBPROCESS_ARGS), e))
             
-            time.sleep(5)
-            logging.debug("clearing event")
+            time.sleep(2)
             DO_CALL_EVT.clear()
             
+            print '%s==>%s ready%s' % (Fore.YELLOW, Fore.BLUE, Style.RESET_ALL)
     
 
 
 def main():
     global SUBPROCESS_ARGS, WORKING_DIR, DO_SHUTDOWN
     
+    colorama.init(autoreset=False)
+    
     sys.stdin.close()
     
     logging.basicConfig(
-        level=logging.INFO,
+        level=logging.FATAL,
         format="%(asctime)s [%(levelname)s] - %(message)s",
     )
     
