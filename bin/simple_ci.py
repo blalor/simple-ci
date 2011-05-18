@@ -86,6 +86,10 @@ def fsevent_callback(stream_ref, full_path, event_count, paths, masks, ids):
         
         logging.debug("FSEvent: %s: for path %s (recursive: %s)" % (i, path, str(recursive)))
         
+        if "/.git" in path:
+            logging.debug("ignoring SCM-related dir")
+            continue
+        
         DO_CALL_EVT.set()
     
 
@@ -106,13 +110,10 @@ def run_command():
             
             print '%s==>%s Running: %s%s' % (Fore.YELLOW, Fore.CYAN, " ".join(SUBPROCESS_ARGS), Style.RESET_ALL)
             
-            # with open("/dev/null", "r") as dev_null:
             try:
                 subprocess.check_call(
                     SUBPROCESS_ARGS,
                     cwd = WORKING_DIR,
-                    # shell=True,
-                    # stdin=dev_null,
                 )
                 
                 print '%s==>%s SUCCESS%s' % (Fore.YELLOW, Fore.GREEN, Style.RESET_ALL)
@@ -122,6 +123,8 @@ def run_command():
             except OSError, e:
                 raise RuntimeError("Unable to invoke %s: %s" % (" ".join(SUBPROCESS_ARGS), e))
             
+            # wait a sec and then clear the event; this keeps the build command
+            # from triggering another build (if it changed files, which is likely)
             time.sleep(2)
             DO_CALL_EVT.clear()
             
@@ -162,6 +165,8 @@ def main():
     worker.start()
     
     logging.info("ready")
+    
+    DO_CALL_EVT.set()
     
     try:
         AppHelper.runConsoleEventLoop(installInterrupt=True)
