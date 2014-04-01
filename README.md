@@ -1,7 +1,7 @@
 simple-ci
 =========
 
-A single-user continuous integration tool for OS X.
+A single-user continuous integration tool.
 
 While reading James Grenning's ["Test Driven Development for Embedded
 C"][embtdd] I noticed a line that said something to the effect of
@@ -10,10 +10,10 @@ C"][embtdd] I noticed a line that said something to the effect of
 
 Well, I loathe IDEs, but I thought this sounded like a pretty cool idea. I
 happened to also be playing around with [pymacadmin's `crankd.py`][pymacadmin]
-at the same time and realized I could steal some code from there to make a
-very simple script that would invoke my `Makefile` every time I saved a file
-in [TextMate][tm]. `simple-ci` is the result. It uses OS X's `FSEvents`
-facility to watch a directory for changes.
+at the same time and realized I could steal some code from there to make a very
+simple script that would invoke my `Makefile` every time I saved a file in
+[TextMate][tm]. `simple-ci` is the result. It uses Yesudeep Mangalapilly's
+[`watchdog`][watchdog] facility to watch a directory for changes.
 
 The cleanest way to use it is to add a target to your `Makefile`, like thus:
 
@@ -54,14 +54,22 @@ displays a [Growl][growl] alert if the tests fail:
 You can use this with any project, not just make-driven ones. Run your Python
 tests with `nose` or JUnit tests with Maven every time you save a file!
 
-Dependencies
+Installation
 ------------
 
-I got carried away and added color. You need the [colorama][colorama] Python
-package; just do `sudo easy_install colorama`.
+`pip install .`
+
+If you get errors like
+
+    clang: error: unknown argument: '-mno-fused-madd' [-Wunused-command-line-argument-hard-error-in-future]
+
+on OS X, try
+
+    ARCHFLAGS=-Wno-error=unused-command-line-argument-hard-error-in-future pip install .
 
 [pymacadmin]: http://code.google.com/p/pymacadmin/ "A collection of Python utilities for Mac OS X system administration"
 [embtdd]: http://pragprog.com/titles/jgade/test-driven-development-for-embedded-c "Test Driven Development for Embedded C by James W. Grenning"
 [tm]: http://macromates.com/ "the missing editor"
 [growl]: http://growl.info/ "Growl"
 [colorama]: http://pypi.python.org/pypi/colorama "colorama: Cross-platform colored terminal text."
+[watchdog]: https://pypi.python.org/pypi/watchdog

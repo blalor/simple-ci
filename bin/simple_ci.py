@@ -13,170 +13,103 @@ import time
 import colorama
 from colorama import Fore, Style
 
-from FSEvents import \
-    FSEventStreamCreate, \
-    FSEventStreamStart, \
-    FSEventStreamScheduleWithRunLoop, \
-    kFSEventStreamEventIdSinceNow, \
-    kCFRunLoopDefaultMode, \
-    kFSEventStreamEventFlagMustScanSubDirs, \
-    kFSEventStreamEventFlagUserDropped, \
-    kFSEventStreamEventFlagKernelDropped
-
-from PyObjCTools import AppHelper
-
-from Cocoa import \
-    CFRunLoopAddTimer, \
-    NSRunLoop, \
-    CFRunLoopTimerCreate, \
-    CFAbsoluteTimeGetCurrent, \
-    kCFRunLoopCommonModes
-
+import argparse
+from watchdog.observers import Observer
+from watchdog.events import FileSystemEventHandler
 
 import threading
 
-# ========= # ========= # ========= # ========= # ========= # ========= #
-SUBPROCESS_ARGS = None
-WORKING_DIR = None
-
-DO_SHUTDOWN = False
-DO_CALL_EVT = threading.Event()
-
-def start_fs_events(path_to_monitor):
-    logging.info("monitoring " + path_to_monitor)
-    
-    stream_ref = FSEventStreamCreate(
-        None,                               # Use the default CFAllocator
-        fsevent_callback,
-        None,                               # We don't need a FSEventStreamContext
-        [path_to_monitor],
-        kFSEventStreamEventIdSinceNow,      # We only want events which happen in the future
-        1.0,                                # Process events within 1 second
-        0                                   # We don't need any special flags for our stream
-    )
-    
-    if not stream_ref:
-        raise RuntimeError("FSEventStreamCreate() failed!")
-    
-    FSEventStreamScheduleWithRunLoop(stream_ref, NSRunLoop.currentRunLoop().getCFRunLoop(), kCFRunLoopDefaultMode)
-    
-    if not FSEventStreamStart(stream_ref):
-        raise RuntimeError("Unable to start FSEvent stream!")
-    
-
-
-def fsevent_callback(stream_ref, full_path, event_count, paths, masks, ids):
-    """Process an FSEvent (consult the Cocoa docs) and call each of our handlers which monitors that path or a parent"""
-    
-    for i in range(event_count):
-        path = os.path.dirname(paths[i])
+class CommandExecutor(threading.Thread):
+    """executes a command on demand"""
+    def __init__(self, working_dir, command):
+        super(CommandExecutor, self).__init__()
+        self.working_dir = working_dir
+        self.command = command
         
-        if masks[i] & kFSEventStreamEventFlagMustScanSubDirs:
-            recursive = True
-        
-        if masks[i] & kFSEventStreamEventFlagUserDropped:
-            logging.error("We were too slow processing FSEvents and some events were dropped")
-            recursive = True
-        
-        if masks[i] & kFSEventStreamEventFlagKernelDropped:
-            logging.error("The kernel was too slow processing FSEvents and some events were dropped!")
-            recursive = True
-        else:
-            recursive = False
-        
-        logging.debug("FSEvent: %s: for path %s (recursive: %s)" % (i, path, str(recursive)))
-        
-        if "/.git" in path:
-            logging.debug("ignoring SCM-related dir")
-            continue
-        
-        DO_CALL_EVT.set()
+        self.daemon = True
+        self._shutdown = False
+        self._event = threading.Event()
     
-
-
-def timer_callback(*args):
-    # logging.debug(str(args))
-    pass
-
-
-def run_command():
-    logging.debug("in run_command")
-    while not DO_SHUTDOWN:
-        time.sleep(0.5)
-        
-        if DO_CALL_EVT.is_set():
-            # clear the screen
-            print '%s2J' % (colorama.ansi.CSI,)
+    def trigger(self):
+        self._event.set()
+    
+    def run(self):
+        logging.debug("in run_command")
+        while not self._shutdown:
+            time.sleep(0.5)
             
-            print '%s==>%s Running: %s%s' % (Fore.YELLOW, Fore.CYAN, " ".join(SUBPROCESS_ARGS), Style.RESET_ALL)
-            
-            try:
-                subprocess.check_call(
-                    SUBPROCESS_ARGS,
-                    cwd = WORKING_DIR,
-                )
+            if self._event.is_set():
+                # clear the screen
+                print '%s2J' % (colorama.ansi.CSI,)
                 
-                print '%s==>%s SUCCESS%s' % (Fore.YELLOW, Fore.GREEN, Style.RESET_ALL)
-            except subprocess.CalledProcessError, e:
-                logging.error(e)
-                print '%s==>%s FAILURE%s' % (Fore.YELLOW + Style.BRIGHT, Fore.RED, Style.RESET_ALL)
-            except OSError, e:
-                raise RuntimeError("Unable to invoke %s: %s" % (" ".join(SUBPROCESS_ARGS), e))
-            
-            # wait a sec and then clear the event; this keeps the build command
-            # from triggering another build (if it changed files, which is likely)
-            time.sleep(2)
-            DO_CALL_EVT.clear()
-            
-            print '%s==>%s ready%s' % (Fore.YELLOW, Fore.BLUE, Style.RESET_ALL)
-    
+                print '%s==>%s Running: %s%s' % (Fore.YELLOW, Fore.CYAN, " ".join(self.command), Style.RESET_ALL)
+                
+                try:
+                    subprocess.check_call(self.command, cwd = self.working_dir)
+                    
+                    print '%s==>%s SUCCESS%s' % (Fore.YELLOW, Fore.GREEN, Style.RESET_ALL)
+                
+                except subprocess.CalledProcessError, e:
+                    logging.error(e)
+                    print '%s==>%s FAILURE%s' % (Fore.YELLOW + Style.BRIGHT, Fore.RED, Style.RESET_ALL)
+                
+                except OSError, e:
+                    raise RuntimeError("Unable to invoke %s: %s" % (" ".join(self.command), e))
+                
+                # wait a sec and then clear the event; this keeps the build command
+                # from triggering another build (if it changed files, which is likely)
+                time.sleep(2)
+                self._event.clear()
+                
+                print '%s==>%s ready%s' % (Fore.YELLOW, Fore.BLUE, Style.RESET_ALL)
 
+
+class EventHandler(FileSystemEventHandler):
+    """FileSystemEventHandler with custom dispatch logic"""
+    def __init__(self, commandExecutor):
+        super(EventHandler, self).__init__()
+        self.commandExecutor = commandExecutor
+    
+    def dispatch(self, event):
+        if "/.git" not in event.src_path:
+            self.commandExecutor.trigger()
 
 def main():
-    global SUBPROCESS_ARGS, WORKING_DIR, DO_SHUTDOWN
+    parser = argparse.ArgumentParser(description="the simplest CI you ever did see")
+    parser.add_argument("watch_dir", help="directory to watch")
+    parser.add_argument("command_and_args", nargs="+", help="command to execute")
     
+    parsed_args = parser.parse_args()
+
     colorama.init(autoreset=False)
-    
     sys.stdin.close()
     
     logging.basicConfig(
-        level=logging.FATAL,
+        level=logging.INFO,
         format="%(asctime)s [%(levelname)s] - %(message)s",
     )
     
-    path_to_monitor = os.path.abspath(sys.argv[1])
-    WORKING_DIR = path_to_monitor
-    SUBPROCESS_ARGS = sys.argv[2:]
+    watchDir = os.path.abspath(parsed_args.watch_dir)
     
-    start_fs_events(path_to_monitor)
-    
-    # NOTE: This timer is basically a kludge around the fact that we can't reliably get
-    #       signals or Control-C inside a runloop. This wakes us up often enough to
-    #       appear tolerably responsive:
-    CFRunLoopAddTimer(
-        NSRunLoop.currentRunLoop().getCFRunLoop(),
-        CFRunLoopTimerCreate(None, CFAbsoluteTimeGetCurrent(), 2.0, 0, 0, timer_callback, None),
-        kCFRunLoopCommonModes
-    )
-    
-    
-    worker = threading.Thread(target = run_command)
-    worker.daemon = True
-    worker.start()
+    commandExecutor = CommandExecutor(watchDir, parsed_args.command_and_args)
+    eventHandler = EventHandler(commandExecutor)
+
+    observer = Observer()
+    observer.schedule(eventHandler, watchDir, recursive=True)
+
+    observer.start()
+    commandExecutor.start()
     
     logging.info("ready")
-    
-    DO_CALL_EVT.set()
-    
-    try:
-        AppHelper.runConsoleEventLoop(installInterrupt=True)
-    except KeyboardInterrupt:
-        logging.info("KeyboardInterrupt received, exiting")
-    
-    DO_SHUTDOWN = True
-    sys.exit(0)
-    
+    commandExecutor.trigger()
 
+    try:
+        while True:
+            time.sleep(1)
+    except KeyboardInterrupt:
+        observer.stop()
+    
+    observer.join()
 
 if __name__ == '__main__':
     main()
