@@ -57,7 +57,7 @@ tests with `nose` or JUnit tests with Maven every time you save a file!
 Installation
 ------------
 
-`pip install .`
+`pip install .` (or `pip install https://github.com/blalor/simple-ci/tarball/master`)
 
 If you get errors like
 
